@@ -4,129 +4,154 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Shahzaib Text to Voice Expert</title>
-  <!-- Tailwind (CDN is fine for this static page) -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* nicer progress */
+    progress::-webkit-progress-bar{background:#e2e8f0;border-radius:999px}
+    progress::-webkit-progress-value{background:#6366f1;border-radius:999px}
+    progress{appearance:none;height:10px;border-radius:999px}
+  </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
-  <div class="max-w-5xl mx-auto p-6">
-    <h1 class="text-2xl font-bold">Shahzaib Text to Voice Expert</h1>
-    <p class="text-sm text-slate-500 mb-6">Beautiful TTS with voices, filters, rate, pitch, volume, styles & breaks.</p>
-
-    <!-- TEXT -->
-    <div class="grid gap-2 mb-4">
-      <label for="text" class="font-medium">Text</label>
-      <textarea id="text" rows="7" class="w-full p-3 rounded border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Type or paste your text here..."></textarea>
-      <div class="flex items-center justify-between text-xs">
-        <span id="charInfo" class="text-slate-500">0 / 100,000</span>
-        <span class="text-slate-400">Tip: Start simple; add filters once it plays.</span>
-      </div>
+<body class="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-purple-50">
+  <header class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+    <div class="max-w-6xl mx-auto px-6 py-5">
+      <h1 class="text-2xl font-bold">Shahzaib Text to Voice Expert</h1>
+      <p class="text-sm/6 text-indigo-100">Beautiful TTS with voices, filters, rate, pitch, volume, styles & breaks.</p>
     </div>
+  </header>
 
-    <!-- FILTERS ROW -->
-    <div class="grid md:grid-cols-3 gap-4 mb-4">
-      <div class="grid gap-1">
-        <label class="font-medium">Language</label>
-        <select id="lang" class="p-2 rounded border border-slate-300"></select>
+  <main class="max-w-6xl mx-auto p-6">
+    <!-- CARD -->
+    <div class="bg-white/80 backdrop-blur rounded-2xl shadow-lg p-5 md:p-6">
+      <!-- TEXT -->
+      <div class="grid gap-2 mb-4">
+        <label for="text" class="font-medium">Text</label>
+        <textarea id="text" rows="7" class="w-full p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Type or paste your text here..."></textarea>
+        <div class="flex items-center justify-between text-xs">
+          <span id="charInfo" class="text-slate-500">0 / 100,000</span>
+          <span class="text-slate-400">Tip: Start simple; add filters once it plays.</span>
+        </div>
       </div>
-      <div class="grid gap-1">
-        <label class="font-medium">Country</label>
-        <select id="country" class="p-2 rounded border border-slate-300"></select>
+
+      <!-- FILTERS -->
+      <div class="grid md:grid-cols-3 gap-4 mb-4">
+        <div class="grid gap-1">
+          <label class="font-medium">Language</label>
+          <select id="lang" class="p-2 rounded-lg border border-slate-300"></select>
+        </div>
+        <div class="grid gap-1">
+          <label class="font-medium">Country</label>
+          <select id="country" class="p-2 rounded-lg border border-slate-300"></select>
+        </div>
+        <div class="grid gap-1">
+          <label class="font-medium">Gender</label>
+          <select id="gender" class="p-2 rounded-lg border border-slate-300">
+            <option value="">Any</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+          </select>
+        </div>
       </div>
-      <div class="grid gap-1">
-        <label class="font-medium">Gender</label>
-        <select id="gender" class="p-2 rounded border border-slate-300">
-          <option value="">Any</option>
-          <option value="Female">Female</option>
-          <option value="Male">Male</option>
-        </select>
+
+      <!-- VOICE + FORMAT -->
+      <div class="grid md:grid-cols-2 gap-4 mb-4">
+        <div class="grid gap-1">
+          <label class="font-medium">Voice</label>
+          <select id="voice" class="p-2 rounded-lg border border-slate-300"></select>
+          <span id="voiceCount" class="text-xs text-slate-500">Loading voices…</span>
+        </div>
+        <div class="grid gap-1">
+          <label class="font-medium">Output Format</label>
+          <select id="format" class="p-2 rounded-lg border border-slate-300">
+            <option value="audio-24khz-48kbitrate-mono-mp3">MP3 (24kHz/48kbps mono)</option>
+            <option value="audio-48khz-192kbitrate-mono-mp3">MP3 (48kHz/192kbps mono)</option>
+            <option value="riff-24khz-16bit-mono-pcm">WAV (24kHz/16bit mono)</option>
+            <option value="webm-24khz-16bit-mono-opus">WebM Opus (24kHz mono)</option>
+          </select>
+        </div>
       </div>
+
+      <!-- SLIDERS -->
+      <div class="grid md:grid-cols-3 gap-4 mb-4">
+        <div>
+          <label class="font-medium">Rate: <span id="rateVal">+0%</span></label>
+          <input id="rate" type="range" min="-50" max="50" value="0" class="w-full" />
+          <div class="text-xs text-slate-400">-50% (slower) to +50% (faster)</div>
+        </div>
+        <div>
+          <label class="font-medium">Pitch: <span id="pitchVal">+0st</span></label>
+          <input id="pitch" type="range" min="-12" max="12" value="0" class="w-full" />
+          <div class="text-xs text-slate-400">-12 to +12 semitones</div>
+        </div>
+        <div>
+          <label class="font-medium">Volume: <span id="volumeVal">+0dB</span></label>
+          <input id="volume" type="range" min="-10" max="10" value="0" class="w-full" />
+          <div class="text-xs text-slate-400">-10dB to +10dB</div>
+        </div>
+      </div>
+
+      <!-- BREAKS -->
+      <div class="grid md:grid-cols-2 gap-4 mb-4">
+        <div class="grid gap-1">
+          <label class="font-medium">Initial Break (ms)</label>
+          <input id="breakMs" type="number" min="0" value="0" class="p-2 rounded-lg border border-slate-300" />
+        </div>
+        <div class="grid gap-1">
+          <label class="font-medium">Sentence Silence (ms)</label>
+          <input id="sentenceSilenceMs" type="number" min="0" value="0" class="p-2 rounded-lg border border-slate-300" />
+        </div>
+      </div>
+
+      <!-- STYLE / ROLE -->
+      <div class="grid md:grid-cols-2 gap-4 mb-4">
+        <div class="grid gap-1">
+          <label class="font-medium">Style (optional)</label>
+          <input id="style" placeholder="e.g. cheerful, sad" class="p-2 rounded-lg border border-slate-300" />
+        </div>
+        <div class="grid gap-1">
+          <label class="font-medium">Role (optional)</label>
+          <input id="role" placeholder="e.g. YoungAdultFemale" class="p-2 rounded-lg border border-slate-300" />
+        </div>
+      </div>
+
+      <!-- LONG MODE -->
+      <div class="flex items-center gap-3 mb-4">
+        <label class="inline-flex items-center gap-2">
+          <input id="longMode" type="checkbox" class="accent-indigo-600">
+          <span class="text-sm">Long script mode (auto-split & merge to WAV)</span>
+        </label>
+        <span class="text-xs text-slate-400">Useful for > 5 minutes content / platform timeouts</span>
+      </div>
+
+      <!-- ACTIONS -->
+      <div class="flex flex-wrap items-center gap-3 mb-3">
+        <button id="speak" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl shadow">
+          ▶ Synthesize
+        </button>
+        <a id="download" class="pointer-events-none opacity-50 bg-slate-100 px-4 py-2 rounded-xl border border-slate-300" href="#">
+          ⬇ Download
+        </a>
+        <span id="status" class="text-sm text-slate-500"></span>
+      </div>
+
+      <!-- PROGRESS -->
+      <div class="mb-2 hidden" id="progressWrap">
+        <div class="flex justify-between text-xs mb-1">
+          <span id="progressLabel">Generating audio…</span>
+          <span id="progressText">0%</span>
+        </div>
+        <progress id="progress" class="w-full" max="100" value="0"></progress>
+      </div>
+
+      <!-- PLAYER -->
+      <audio id="player" class="hidden w-full mt-3" controls></audio>
     </div>
+  </main>
 
-    <!-- VOICE + FORMAT -->
-    <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <div class="grid gap-1">
-        <label class="font-medium">Voice</label>
-        <select id="voice" class="p-2 rounded border border-slate-300"></select>
-        <span id="voiceCount" class="text-xs text-slate-500">Loading voices…</span>
-      </div>
-      <div class="grid gap-1">
-        <label class="font-medium">Output Format</label>
-        <select id="format" class="p-2 rounded border border-slate-300">
-          <option value="audio-24khz-48kbitrate-mono-mp3">MP3 (24kHz/48kbps mono)</option>
-          <option value="audio-48khz-192kbitrate-mono-mp3">MP3 (48kHz/192kbps mono)</option>
-          <option value="riff-24khz-16bit-mono-pcm">WAV (24kHz/16bit mono)</option>
-          <option value="webm-24khz-16bit-mono-opus">WebM Opus (24kHz mono)</option>
-        </select>
-      </div>
-    </div>
+  <footer class="py-6 text-center text-xs text-slate-500">
+    © Shahzaib Text to Voice Expert
+  </footer>
 
-    <!-- SLIDERS -->
-    <div class="grid md:grid-cols-3 gap-4 mb-4">
-      <div>
-        <label class="font-medium">Rate: <span id="rateVal">+0%</span></label>
-        <input id="rate" type="range" min="-50" max="50" value="0" class="w-full" />
-        <div class="text-xs text-slate-400">-50% (slower) to +50% (faster)</div>
-      </div>
-      <div>
-        <label class="font-medium">Pitch: <span id="pitchVal">+0st</span></label>
-        <input id="pitch" type="range" min="-12" max="12" value="0" class="w-full" />
-        <div class="text-xs text-slate-400">-12 to +12 semitones</div>
-      </div>
-      <div>
-        <label class="font-medium">Volume: <span id="volumeVal">+0dB</span></label>
-        <input id="volume" type="range" min="-10" max="10" value="0" class="w-full" />
-        <div class="text-xs text-slate-400">-10dB to +10dB</div>
-      </div>
-    </div>
-
-    <!-- BREAKS -->
-    <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <div class="grid gap-1">
-        <label class="font-medium">Initial Break (ms)</label>
-        <input id="breakMs" type="number" min="0" value="0" class="p-2 rounded border border-slate-300" />
-      </div>
-      <div class="grid gap-1">
-        <label class="font-medium">Sentence Silence (ms)</label>
-        <input id="sentenceSilenceMs" type="number" min="0" value="0" class="p-2 rounded border border-slate-300" />
-      </div>
-    </div>
-
-    <!-- STYLE / ROLE -->
-    <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <div class="grid gap-1">
-        <label class="font-medium">Style (optional)</label>
-        <input id="style" placeholder="e.g. cheerful, sad" class="p-2 rounded border border-slate-300" />
-      </div>
-      <div class="grid gap-1">
-        <label class="font-medium">Role (optional)</label>
-        <input id="role" placeholder="e.g. YoungAdultFemale" class="p-2 rounded border border-slate-300" />
-      </div>
-    </div>
-
-    <!-- ACTIONS -->
-    <div class="flex items-center gap-3 mb-3">
-      <button id="speak" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded shadow">
-        ▶ Synthesize
-      </button>
-      <a id="download" class="pointer-events-none opacity-50 bg-slate-100 px-4 py-2 rounded border border-slate-300" href="#">
-        ⬇ Download
-      </a>
-      <span id="status" class="text-sm text-slate-500"></span>
-    </div>
-
-    <!-- PROGRESS -->
-    <div class="mb-4 hidden" id="progressWrap">
-      <div class="flex justify-between text-xs mb-1">
-        <span>Generating audio…</span>
-        <span id="progressText">0%</span>
-      </div>
-      <progress id="progress" class="w-full" max="100" value="0"></progress>
-    </div>
-
-    <!-- PLAYER -->
-    <audio id="player" class="hidden w-full mt-3" controls></audio>
-  </div>
-
-  <script src="./app.js"></script>
+  <script src="./app.js?v=3"></script>
 </body>
 </html>
