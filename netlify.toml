@@ -5,14 +5,15 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+  # ensure the package is bundled properly
+  external_node_modules = ["@andresaya/edge-tts"]
+
+[[redirects]]
+  from = "/api/voices"
+  to = "/.netlify/functions/voices"
+  status = 200
 
 [[redirects]]
   from = "/api/tts"
   to = "/.netlify/functions/tts"
   status = 200
-
-  [[redirects]]
-  from = "/api/voices"
-  to = "/.netlify/functions/voices"
-  status = 200
-
