@@ -1,0 +1,30 @@
+{
+  "name": "shahzaib-text-to-voice-expert",
+  "version": "1.0.0",
+  "description": "Shahzaib Text to Voice Expert - Full TTS with UI and filters",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "start": "node index.js",
+    "build": "echo \"No build step yet\"",
+    "voices": "npx @andresaya/edge-tts voice-list",
+    "say": "npx @andresaya/edge-tts synthesize -t \"Hello from Shahzaib Text to Voice Expert\" -o output"
+  },
+  "keywords": [
+    "TTS",
+    "edge-tts",
+    "Shahzaib",
+    "voice",
+    "text-to-speech",
+    "Netlify"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@andresaya/edge-tts": "^1.4.1"
+  },
+  "devDependencies": {
+    "netlify-cli": "^23.9.1"
+  }
+}
