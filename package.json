@@ -4,6 +4,8 @@
   "description": "Shahzaib Text to Voice Expert - Full TTS with UI and filters",
   "main": "index.js",
   "type": "module",
+  "engines": { "node": ">=18" },
+
   "scripts": {
     "dev": "netlify dev",
     "start": "node index.js",

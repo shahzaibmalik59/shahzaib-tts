@@ -5,7 +5,7 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
-  # ensure the package is bundled properly
+  # ✅ ensure this package is bundled into the function
   external_node_modules = ["@andresaya/edge-tts"]
 
 [[redirects]]
