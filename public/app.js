@@ -185,6 +185,7 @@ function buildFiltersAndVoices(){
   if (saved.gender) els.gender.value = saved.gender;
   if (saved.format) els.format.value = saved.format;
   if (saved.longMode) els.longMode.checked = true;
+  handleLongModeToggle(); // ensure format disabled/enforced if needed
 
   applyFilters();
 
@@ -258,10 +259,13 @@ function hideProgress(){
 }
 
 // ===== LONG SCRIPT UTILITIES =====
-function splitTextSmart(t, maxLen=2500){
-  const paras = t.split(/\n{2,}/).map(s=>s.trim()).filter(Boolean);
+function splitTextSmart(t, maxLen=2000){
+  // chunk regardless of length when long mode enabled
+  const clean = t.replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const paras = clean.split(/(?:\n\s*){2,}/).map(s=>s.trim()).filter(Boolean);
   const chunks = [];
-  for (const p of paras){
+  for (const p of (paras.length ? paras : [clean])){
     if (p.length <= maxLen){ chunks.push(p); continue; }
     const sentences = p.split(/(?<=[\.\!\?])\s+/);
     let cur = '';
@@ -275,14 +279,14 @@ function splitTextSmart(t, maxLen=2500){
     }
     if (cur.trim()) chunks.push(cur.trim());
   }
-  return chunks.length ? chunks : [t.slice(0, maxLen)];
+  return chunks.length ? chunks : [clean];
 }
 
 // WAV parse/merge helpers
 function parseWav(ab){
   const v = new DataView(ab);
   const readStr = (o,n)=>String.fromCharCode(...new Uint8Array(ab,o,n));
-  if (readStr(0,4)!=='RIFF' || readStr(8,4)!=='WAVE') throw new Error('Invalid WAV');
+  if (readStr(0,4)!=='RIFF' || readStr(8,4)!=='WAVE') throw new Error('Invalid WAV header (not RIFF/WAVE)');
   let pos = 12, fmt=null, dataStart=0, dataLen=0;
   while (pos < v.byteLength){
     const id = readStr(pos,4); pos+=4;
@@ -294,6 +298,9 @@ function parseWav(ab){
     if (id==='data'){ dataStart=pos; dataLen=size; }
     pos += size;
   }
+  if (!fmt) throw new Error('Missing fmt chunk');
+  if (!dataLen) throw new Error('Missing data chunk');
+  if (fmt.audioFormat !== 1) throw new Error('Not PCM');
   const samples = new Uint8Array(ab, dataStart, dataLen);
   return { fmt, samples };
 }
@@ -323,6 +330,17 @@ function writeWav(samples, sampleRate=24000, numChannels=1, bitsPerSample=16){
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
+// Enforce/disable format when long mode toggles
+function handleLongModeToggle(){
+  if (els.longMode.checked){
+    els.format.value = 'riff-24khz-16bit-mono-pcm';
+    els.format.disabled = true;
+  } else {
+    els.format.disabled = false;
+  }
+}
+els.longMode.addEventListener('change', () => { handleLongModeToggle(); persistSettings(); });
+
 // ===== TTS =====
 els.speak.addEventListener("click", async () => {
   const text = (els.text.value || "").trim();
@@ -346,30 +364,62 @@ els.speak.addEventListener("click", async () => {
 
   try {
     if (els.longMode.checked){
-      // force WAV for safe merge
+      // Always chunk and always WAV
       const format = 'riff-24khz-16bit-mono-pcm';
-      const chunks = splitTextSmart(text, 2500);
-      const blobs = [];
+      const chunks = splitTextSmart(text, 2000);
+      if (!chunks.length) throw new Error('No text after cleaning.');
+
+      const wavBlobs = [];
       for (let i=0;i<chunks.length;i++){
-        showProgress(`Synthesizing part ${i+1}/${chunks.length}…`, (i/chunks.length)*100);
+        const label = `Synthesizing part ${i+1}/${chunks.length}…`;
+        showProgress(label, Math.max(5, (i/chunks.length)*100));
+
         const r = await fetch(`${API_BASE}/api/tts`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...baseBody, text: chunks[i], format })
         });
-        if (!r.ok){ let m=`HTTP ${r.status}`; try{m=(await r.json()).error||m;}catch{} throw new Error(m); }
+
+        if (!r.ok){
+          let m=`HTTP ${r.status}`;
+          try{ m = (await r.json()).error || m; }catch{}
+          throw new Error(`Part ${i+1}: ${m}`);
+        }
+
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (!ct.includes('audio/wav') && !ct.includes('audio/x-wav')){
+          // still try to parse; if it fails, raise a clearer error
+        }
+
         const ab = await r.arrayBuffer();
-        blobs.push(new Blob([ab], { type: 'audio/wav' }));
+        try {
+          // Validate before storing
+          parseWav(ab);
+        } catch (err) {
+          throw new Error(`Part ${i+1}: Invalid WAV (${err.message})`);
+        }
+        wavBlobs.push(new Blob([ab], { type: 'audio/wav' }));
       }
+
       // merge WAVs
       const pcmParts = [];
       let fmtRef = null;
-      for (const b of blobs){
-        const ab = await b.arrayBuffer();
+      for (let i=0; i<wavBlobs.length; i++){
+        const ab = await wavBlobs[i].arrayBuffer();
         const { fmt, samples } = parseWav(ab);
-        fmtRef = fmtRef || fmt;
+        if (!fmtRef){
+          fmtRef = fmt; // use first as reference
+        } else {
+          // sanity check: sample rate / channels / bits must match
+          if (fmt.sampleRate !== fmtRef.sampleRate ||
+              fmt.numChannels !== fmtRef.numChannels ||
+              fmt.bitsPerSample !== fmtRef.bitsPerSample){
+            throw new Error(`Part ${i+1}: WAV format mismatch`);
+          }
+        }
         pcmParts.push(samples);
       }
+
       const totalLen = pcmParts.reduce((n,a)=>n+a.byteLength, 0);
       const merged = new Uint8Array(totalLen);
       let offset = 0;
@@ -377,8 +427,9 @@ els.speak.addEventListener("click", async () => {
       const mergedWav = writeWav(merged, fmtRef.sampleRate, fmtRef.numChannels, fmtRef.bitsPerSample);
       finishPlayback(mergedWav, /*isWav=*/true);
       showProgress('Finishing…', 100);
+
     } else {
-      // single call, respect selected format
+      // Single call, respect selected format
       const format = els.format.value;
       const r = await fetch(`${API_BASE}/api/tts`, {
         method: "POST",
@@ -420,3 +471,4 @@ function finishPlayback(blob, isWav){
 // boot
 loadVoices();
 updateCharInfo();
+handleLongModeToggle();
