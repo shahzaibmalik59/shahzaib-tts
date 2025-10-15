@@ -1,5 +1,5 @@
 // ===== CONFIG =====
-const API_BASE = 'https://shahzaib-tts-rol57qnpc-shahzzaibs-projects.vercel.app';
+const API_BASE = 'https://shahzaib-tts-rol57qnpc-shahzzaibs-projects.vercel.app'; // your Vercel API
 const LS_KEY = 'shahzaib-tts-settings-v2';
 const VOICE_CACHE_KEY = 'shahzaib-tts-voices';
 const VOICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -98,17 +98,31 @@ function bindPersist(id){
   "breakMs","sentenceSilenceMs","style","role","longMode"
 ].forEach(bindPersist);
 
-// ===== LANG/COUNTRY NAMES =====
-const langNames = new Intl.DisplayNames(['en'], { type: 'language' });
-const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
-const allVoices = { list: [] };
+// ===== LANG/COUNTRY SAFE NAMES =====
+const _langDN = new Intl.DisplayNames(['en'], { type: 'language' });
+const _regDN  = new Intl.DisplayNames(['en'], { type: 'region' });
+function safeLangLabel(code) {
+  if (!code) return '';
+  try {
+    const n = _langDN.of(code);
+    return n ? `${n} (${code})` : code;
+  } catch { return code; }
+}
+function safeRegionLabel(code) {
+  if (!code) return '';
+  try {
+    const n = _regDN.of(code);
+    return n ? `${n} (${code})` : code;
+  } catch { return code; }
+}
 
+// ===== VOICES =====
+const allVoices = { list: [] };
 function parts(locale){
   const [lang, region=""] = (locale || "").split('-');
   return { lang, region };
 }
 
-// ===== VOICES (cache+load) =====
 function cacheVoices(voices){
   localStorage.setItem(VOICE_CACHE_KEY, JSON.stringify({at:Date.now(), voices}));
 }
@@ -137,31 +151,33 @@ async function loadVoices(){
     // minimal fallback
     allVoices.list = [
       { ShortName: "en-US-AriaNeural", Locale: "en-US", Gender: "Female" },
-      { ShortName: "en-US-GuyNeural", Locale: "en-US", Gender: "Male" },
+      { ShortName: "en-US-GuyNeural",  Locale: "en-US", Gender: "Male"  },
     ];
     buildFiltersAndVoices();
   }
 }
 
 function buildFiltersAndVoices(){
-  // language & country sets with names
-  const langSet = new Map(); // code -> name
-  const regionSet = new Map();
+  const langSet = new Map();   // code -> label
+  const regionSet = new Map(); // code -> label
 
   allVoices.list.forEach(v=>{
     const { lang, region } = parts(v.Locale);
-    if (lang && !langSet.has(lang)) langSet.set(lang, `${langNames.of(lang) || lang} (${lang})`);
-    if (region && !regionSet.has(region)) regionSet.set(region, `${regionNames.of(region) || region} (${region})`);
+    if (lang && !langSet.has(lang))       langSet.set(lang,   safeLangLabel(lang));
+    if (region && !regionSet.has(region)) regionSet.set(region, safeRegionLabel(region));
   });
 
-  // build selects
   els.lang.innerHTML = `<option value="">Any</option>` +
-    [...langSet.entries()].sort((a,b)=>a[1].localeCompare(b[1]))
-      .map(([code,label]) => `<option value="${code}">${label}</option>`).join("");
+    [...langSet.entries()]
+      .sort((a,b)=>a[1].localeCompare(b[1]))
+      .map(([code,label]) => `<option value="${code}">${label}</option>`)
+      .join("");
 
   els.country.innerHTML = `<option value="">Any</option>` +
-    [...regionSet.entries()].sort((a,b)=>a[1].localeCompare(b[1]))
-      .map(([code,label]) => `<option value="${code}">${label}</option>`).join("");
+    [...regionSet.entries()]
+      .sort((a,b)=>a[1].localeCompare(b[1]))
+      .map(([code,label]) => `<option value="${code}">${label}</option>`)
+      .join("");
 
   // restore saved high-level filters before applying
   if (saved.lang) els.lang.value = saved.lang;
@@ -172,7 +188,7 @@ function buildFiltersAndVoices(){
 
   applyFilters();
 
-  // restore text & sliders & other fields
+  // restore remaining fields
   if (saved.text) els.text.value = saved.text;
   if (saved.rate) els.rate.value = saved.rate;
   if (saved.pitch) els.pitch.value = saved.pitch;
@@ -201,12 +217,18 @@ function applyFilters(){
 
   els.voice.innerHTML = filtered
     .sort((a,b)=> a.Locale.localeCompare(b.Locale) || a.ShortName.localeCompare(b.ShortName))
-    .map(v => `<option value="${v.ShortName}">${v.ShortName} — ${langNames.of(parts(v.Locale).lang) || parts(v.Locale).lang}, ${regionNames.of(parts(v.Locale).region) || parts(v.Locale).region} — ${v.Gender}</option>`)
+    .map(v => {
+      const { lang, region } = parts(v.Locale);
+      const langNice   = safeLangLabel(lang).replace(` (${lang})`, '');
+      const regionNice = region ? safeRegionLabel(region).replace(` (${region})`, '') : '';
+      const localeNice = regionNice ? `${langNice}, ${regionNice}` : langNice;
+      return `<option value="${v.ShortName}">${v.ShortName} — ${localeNice} — ${v.Gender}</option>`;
+    })
     .join("");
 
   els.voiceCount.textContent = `Loaded ${filtered.length} / ${allVoices.list.length} voices.`;
 
-  // restore saved voice if exists in filtered
+  // restore saved voice if still present
   if (saved.voice && [...els.voice.options].some(o => o.value === saved.voice)) {
     els.voice.value = saved.voice;
   }
@@ -237,12 +259,10 @@ function hideProgress(){
 
 // ===== LONG SCRIPT UTILITIES =====
 function splitTextSmart(t, maxLen=2500){
-  // try paragraphs first
   const paras = t.split(/\n{2,}/).map(s=>s.trim()).filter(Boolean);
   const chunks = [];
   for (const p of paras){
     if (p.length <= maxLen){ chunks.push(p); continue; }
-    // sentence split
     const sentences = p.split(/(?<=[\.\!\?])\s+/);
     let cur = '';
     for (const s of sentences){
@@ -258,7 +278,7 @@ function splitTextSmart(t, maxLen=2500){
   return chunks.length ? chunks : [t.slice(0, maxLen)];
 }
 
-// WAV merge (16-bit mono, 24kHz) -> single WAV
+// WAV parse/merge helpers
 function parseWav(ab){
   const v = new DataView(ab);
   const readStr = (o,n)=>String.fromCharCode(...new Uint8Array(ab,o,n));
@@ -285,23 +305,18 @@ function writeWav(samples, sampleRate=24000, numChannels=1, bitsPerSample=16){
   const v = new DataView(buffer);
   const u8 = new Uint8Array(buffer);
 
-  // RIFF header
-  u8.set([82,73,70,70]);                   // "RIFF"
+  u8.set([82,73,70,70]);                       // "RIFF"
   v.setUint32(4, 36 + dataLen, true);
-  u8.set([87,65,86,69], 8);                 // "WAVE"
-
-  // fmt chunk
-  u8.set([102,109,116,32], 12);            // "fmt "
-  v.setUint32(16, 16, true);               // chunk size
-  v.setUint16(20, 1, true);                // PCM
+  u8.set([87,65,86,69], 8);                     // "WAVE"
+  u8.set([102,109,116,32], 12);                 // "fmt "
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);                     // PCM
   v.setUint16(22, numChannels, true);
   v.setUint32(24, sampleRate, true);
   v.setUint32(28, byteRate, true);
   v.setUint16(32, blockAlign, true);
   v.setUint16(34, bitsPerSample, true);
-
-  // data chunk
-  u8.set([100,97,116,97], 36);             // "data"
+  u8.set([100,97,116,97], 36);                  // "data"
   v.setUint32(40, dataLen, true);
   u8.set(new Uint8Array(samples), 44);
 
@@ -355,7 +370,6 @@ els.speak.addEventListener("click", async () => {
         fmtRef = fmtRef || fmt;
         pcmParts.push(samples);
       }
-      // concat all PCM bytes
       const totalLen = pcmParts.reduce((n,a)=>n+a.byteLength, 0);
       const merged = new Uint8Array(totalLen);
       let offset = 0;
@@ -399,7 +413,7 @@ function finishPlayback(blob, isWav){
   // prepare download
   const stamp = new Date().toISOString().replace(/[:T]/g,'-').split('.')[0];
   els.download.href = url;
-  els.download.download = (isWav ? "shahzaib-tts_" : "shahzaib-tts_") + stamp + (isWav ? ".wav" : ".mp3");
+  els.download.download = `shahzaib-tts_${stamp}${isWav ? ".wav" : ".mp3"}`;
   els.download.classList.remove("pointer-events-none","opacity-50");
 }
 
