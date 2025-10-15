@@ -5,6 +5,12 @@ const VOICE_CACHE_KEY = 'shahzaib-tts-voices';
 const VOICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CHARS = 100000;
 
+// long mode chunking
+const CHUNK_LEN = 300;   // primary target length
+const SUBCHUNK_LEN = 120; // fallback when a chunk keeps failing
+const MAX_RETRIES = 3;   // per request
+const BASE_BACKOFF_MS = 600; // exponential backoff starting delay
+
 // ===== ELEMENTS =====
 const els = {
   text: document.getElementById("text"),
@@ -219,7 +225,6 @@ function hideProgress(){
 // ===== LONG MODE: force MP3 & always chunk =====
 function handleLongModeToggle(){
   if (els.longMode.checked){
-    // lock to MP3 for reliability
     els.format.value = 'audio-24khz-48kbitrate-mono-mp3';
     els.format.disabled = true;
   } else {
@@ -228,27 +233,76 @@ function handleLongModeToggle(){
 }
 els.longMode.addEventListener('change', ()=>{ handleLongModeToggle(); persistSettings(); });
 
-// split text into ~2000 char chunks (sentence-aware)
-function splitTextSmart(t, maxLen=2000){
-  const clean = t.replace(/\s+/g,' ').trim();
-  if (!clean) return [];
-  const paras = clean.split(/(?:\n\s*){2,}/).map(s=>s.trim()).filter(Boolean);
-  const chunks=[];
-  for (const p of (paras.length?paras:[clean])){
-    if (p.length<=maxLen){ chunks.push(p); continue; }
-    const sentences = p.split(/(?<=[.!?])\s+/);
-    let cur='';
-    for (const s of sentences){
-      if ((cur+' '+s).trim().length>maxLen){
-        if (cur) chunks.push(cur.trim());
-        cur=s;
+// ===== TEXT SPLITTING =====
+function splitBySentences(text){
+  // split on ., !, ?, … followed by space/newline
+  return text.split(/(?<=[\.!\?…])\s+/).map(s=>s.trim()).filter(Boolean);
+}
+function packSegments(segments, maxLen){
+  const out=[]; let cur='';
+  for (const s of segments){
+    if ((cur + (cur?' ':'') + s).length > maxLen){
+      if (cur) out.push(cur);
+      if (s.length > maxLen){
+        // if a single sentence is longer than maxLen, break by words
+        const words = s.split(/\s+/);
+        let c2='';
+        for (const w of words){
+          if ((c2 + (c2?' ':'') + w).length > maxLen){
+            out.push(c2); c2=w;
+          } else c2 = c2 ? `${c2} ${w}` : w;
+        }
+        if (c2) out.push(c2);
+        cur='';
       } else {
-        cur = (cur?cur+' ':'') + s;
+        cur = s;
       }
+    } else {
+      cur = cur ? `${cur} ${s}` : s;
     }
-    if (cur.trim()) chunks.push(cur.trim());
   }
-  return chunks.length?chunks:[clean];
+  if (cur) out.push(cur);
+  return out;
+}
+function splitTextSmart(text, maxLen){
+  const clean = text.replace(/\s+/g,' ').trim();
+  if (!clean) return [];
+  const segments = splitBySentences(clean);
+  if (!segments.length) return [clean];
+  return packSegments(segments, maxLen);
+}
+
+// ===== REQUEST + RETRY =====
+async function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function ttsRequest(body){
+  const r = await fetch(`${API_BASE}/api/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok){
+    let msg=`HTTP ${r.status}`;
+    try { msg = (await r.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+async function ttsWithRetry(body, labelForLogs){
+  let attempt=0, err;
+  while (attempt < MAX_RETRIES){
+    try{
+      return await ttsRequest(body);
+    }catch(e){
+      err = e;
+      const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt); // 600,1200,2400...
+      console.warn(`TTS failed (${labelForLogs}) attempt ${attempt+1}: ${e.message} — retrying in ${backoff}ms`);
+      await sleep(backoff);
+    }
+    attempt++;
+  }
+  throw err || new Error('Unknown TTS error');
 }
 
 // ===== TTS =====
@@ -273,28 +327,45 @@ els.speak.addEventListener("click", async () => {
 
   try {
     if (els.longMode.checked){
-      // always chunk + MP3
+      // === LONG MODE: MP3 + chunking + retry + fallback subchunks ===
       const format = 'audio-24khz-48kbitrate-mono-mp3';
-      const chunks = splitTextSmart(text, 2000);
+      let chunks = splitTextSmart(text, CHUNK_LEN);
       if (!chunks.length) throw new Error('No text after cleaning.');
 
       const mp3Parts = [];
+      const failed = [];
       for (let i=0;i<chunks.length;i++){
-        showProgress(`Synthesizing part ${i+1}/${chunks.length}…`, Math.max(5, (i/chunks.length)*100));
-        const r = await fetch(`${API_BASE}/api/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...baseBody, text: chunks[i], format })
-        });
-        if (!r.ok){
-          let msg = `HTTP ${r.status}`;
-          try { msg = (await r.json()).error || msg; } catch {}
-          throw new Error(`Part ${i+1}: ${msg}`);
+        const label = `part ${i+1}/${chunks.length}`;
+        showProgress(`Synthesizing ${label}…`, Math.max(5, (i/chunks.length)*100));
+        try{
+          const body = { ...baseBody, text: chunks[i], format };
+          const audio = await ttsWithRetry(body, label);
+          mp3Parts.push(audio);
+        }catch(e){
+          console.warn(`Primary chunk failed (${label}). Falling back to sub-chunks…`, e);
+          // fallback: split this chunk smaller and try to salvage
+          const subs = splitTextSmart(chunks[i], SUBCHUNK_LEN);
+          let salvaged = 0;
+          for (let j=0;j<subs.length;j++){
+            const subLabel = `part ${i+1} sub ${j+1}/${subs.length}`;
+            try{
+              const body = { ...baseBody, text: subs[j], format };
+              const audio = await ttsWithRetry(body, subLabel);
+              mp3Parts.push(audio);
+              salvaged++;
+            }catch(e2){
+              console.warn(`Sub-chunk failed (${subLabel})`, e2);
+              failed.push(`${i+1}.${j+1}`);
+            }
+          }
+          if (salvaged === 0) {
+            // nothing worked for this chunk — record it
+            failed.push(`${i+1}`);
+          }
         }
-        const ab = await r.arrayBuffer();
-        mp3Parts.push(new Uint8Array(ab));
       }
-      // simple MP3 concat (valid; frames are self-contained)
+
+      // simple MP3 concat
       const total = mp3Parts.reduce((n,a)=>n+a.byteLength,0);
       const merged = new Uint8Array(total);
       let off=0; for (const p of mp3Parts){ merged.set(p,off); off+=p.byteLength; }
@@ -302,8 +373,12 @@ els.speak.addEventListener("click", async () => {
       finishPlayback(blob, false);
       showProgress('Finishing…', 100);
 
+      els.status.textContent = failed.length
+        ? `Done with warnings. Skipped tiny segments: [${failed.join(', ')}]`
+        : `Done.`;
+
     } else {
-      // single request; respect selected format
+      // === SHORT MODE: single request; respect chosen format ===
       const format = els.format.value;
       const r = await fetch(`${API_BASE}/api/tts`, {
         method: "POST",
@@ -317,14 +392,14 @@ els.speak.addEventListener("click", async () => {
       const blob = new Blob([buf], { type: mime });
       finishPlayback(blob, isWav);
       showProgress('Finishing…', 100);
-    }
 
-    els.status.textContent = "Ready.";
+      els.status.textContent = "Done.";
+    }
   } catch (e) {
     els.status.textContent = `Error: ${e.message}`;
   } finally {
     els.speak.disabled = false;
-    setTimeout(hideProgress, 500);
+    setTimeout(hideProgress, 600);
     persistSettings();
   }
 });
@@ -342,6 +417,14 @@ function finishPlayback(blob, isWav){
 }
 
 // ===== BOOT =====
+function handleLongModeToggle(){
+  if (els.longMode.checked){
+    els.format.value = 'audio-24khz-48kbitrate-mono-mp3';
+    els.format.disabled = true;
+  } else {
+    els.format.disabled = false;
+  }
+}
 loadVoices();
 updateCharInfo();
 handleLongModeToggle();
