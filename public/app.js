@@ -1,15 +1,27 @@
 // ===== CONFIG =====
-const API_BASE = 'https://shahzaib-tts-djwq5krow-shahzzaibs-projects.vercel.app';
+// If you're using Netlify -> Vercel proxy in netlify.toml, leave this EMPTY:
+let API_BASE = ''; // '' means same-origin => Netlify will proxy /api/* to Vercel
+
+// If you prefer calling Vercel directly (no Netlify proxy), set a FULL URL here:
+// API_BASE = 'https://shahzaib-tts-api.vercel.app';
+
 const LS_KEY = 'shahzaib-tts-settings-v2';
 const VOICE_CACHE_KEY = 'shahzaib-tts-voices';
 const VOICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CHARS = 100000;
 
 // long mode chunking
-const CHUNK_LEN = 300;   // primary target length
-const SUBCHUNK_LEN = 120; // fallback when a chunk keeps failing
-const MAX_RETRIES = 3;   // per request
-const BASE_BACKOFF_MS = 600; // exponential backoff starting delay
+const CHUNK_LEN = 300;
+const SUBCHUNK_LEN = 120;
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 600;
+
+// ===== small helpers =====
+function url(path) {
+  // if API_BASE is '', use relative path (/api/...), else ensure it starts with https://
+  if (!API_BASE) return path;
+  return API_BASE.startsWith('http') ? `${API_BASE}${path}` : `https://${API_BASE}${path}`;
+}
 
 // ===== ELEMENTS =====
 const els = {
@@ -41,6 +53,11 @@ const els = {
   progressText: document.getElementById("progressText"),
   progressLabel: document.getElementById("progressLabel"),
 };
+
+// ===== global debug hooks (helps when "console shows nothing") =====
+console.log('[boot] app.js loaded');
+window.addEventListener('error', e => console.error('[window.onerror]', e.message));
+window.addEventListener('unhandledrejection', e => console.error('[unhandledrejection]', e.reason));
 
 // ===== UI HELPERS =====
 const fmt = {
@@ -124,12 +141,16 @@ async function loadVoices(){
   const cached = readCachedVoices();
   if (cached){ allVoices.list = cached; buildFiltersAndVoices(); return; }
   try{
-    const r = await fetch(`${API_BASE}/api/voices`);
+    const endpoint = url('/api/voices');
+    console.log('[voices] fetching:', endpoint);
+    const r = await fetch(endpoint, { mode: 'cors' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const { voices = [] } = await r.json();
     allVoices.list = voices;
     cacheVoices(voices);
     buildFiltersAndVoices();
-  }catch{
+  }catch(err){
+    console.error('[voices] failed, using fallback:', err);
     allVoices.list = [
       { ShortName:"en-US-AriaNeural", Locale:"en-US", Gender:"Female" },
       { ShortName:"en-US-GuyNeural",  Locale:"en-US", Gender:"Male"   }
@@ -235,7 +256,6 @@ els.longMode.addEventListener('change', ()=>{ handleLongModeToggle(); persistSet
 
 // ===== TEXT SPLITTING =====
 function splitBySentences(text){
-  // split on ., !, ?, … followed by space/newline
   return text.split(/(?<=[\.!\?…])\s+/).map(s=>s.trim()).filter(Boolean);
 }
 function packSegments(segments, maxLen){
@@ -244,7 +264,6 @@ function packSegments(segments, maxLen){
     if ((cur + (cur?' ':'') + s).length > maxLen){
       if (cur) out.push(cur);
       if (s.length > maxLen){
-        // if a single sentence is longer than maxLen, break by words
         const words = s.split(/\s+/);
         let c2='';
         for (const w of words){
@@ -276,7 +295,8 @@ function splitTextSmart(text, maxLen){
 async function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
 async function ttsRequest(body){
-  const r = await fetch(`${API_BASE}/api/tts`, {
+  const endpoint = url('/api/tts');
+  const r = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
@@ -296,7 +316,7 @@ async function ttsWithRetry(body, labelForLogs){
       return await ttsRequest(body);
     }catch(e){
       err = e;
-      const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt); // 600,1200,2400...
+      const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt);
       console.warn(`TTS failed (${labelForLogs}) attempt ${attempt+1}: ${e.message} — retrying in ${backoff}ms`);
       await sleep(backoff);
     }
@@ -327,7 +347,6 @@ els.speak.addEventListener("click", async () => {
 
   try {
     if (els.longMode.checked){
-      // === LONG MODE: MP3 + chunking + retry + fallback subchunks ===
       const format = 'audio-24khz-48kbitrate-mono-mp3';
       let chunks = splitTextSmart(text, CHUNK_LEN);
       if (!chunks.length) throw new Error('No text after cleaning.');
@@ -343,7 +362,6 @@ els.speak.addEventListener("click", async () => {
           mp3Parts.push(audio);
         }catch(e){
           console.warn(`Primary chunk failed (${label}). Falling back to sub-chunks…`, e);
-          // fallback: split this chunk smaller and try to salvage
           const subs = splitTextSmart(chunks[i], SUBCHUNK_LEN);
           let salvaged = 0;
           for (let j=0;j<subs.length;j++){
@@ -358,14 +376,10 @@ els.speak.addEventListener("click", async () => {
               failed.push(`${i+1}.${j+1}`);
             }
           }
-          if (salvaged === 0) {
-            // nothing worked for this chunk — record it
-            failed.push(`${i+1}`);
-          }
+          if (salvaged === 0) failed.push(`${i+1}`);
         }
       }
 
-      // simple MP3 concat
       const total = mp3Parts.reduce((n,a)=>n+a.byteLength,0);
       const merged = new Uint8Array(total);
       let off=0; for (const p of mp3Parts){ merged.set(p,off); off+=p.byteLength; }
@@ -378,9 +392,9 @@ els.speak.addEventListener("click", async () => {
         : `Done.`;
 
     } else {
-      // === SHORT MODE: single request; respect chosen format ===
       const format = els.format.value;
-      const r = await fetch(`${API_BASE}/api/tts`, {
+      const endpoint = url('/api/tts');
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...baseBody, text, format })
@@ -405,13 +419,11 @@ els.speak.addEventListener("click", async () => {
 });
 
 function finishPlayback(blob, isWav){
-  const url = URL.createObjectURL(blob);
-  // no autoplay
-  els.player.src = url;
+  const urlObj = URL.createObjectURL(blob);
+  els.player.src = urlObj;
   els.player.classList.remove("hidden");
-  // download
   const stamp = new Date().toISOString().replace(/[:T]/g,'-').split('.')[0];
-  els.download.href = url;
+  els.download.href = urlObj;
   els.download.download = `shahzaib-tts_${stamp}${isWav?".wav":".mp3"}`;
   els.download.classList.remove("pointer-events-none","opacity-50");
 }
