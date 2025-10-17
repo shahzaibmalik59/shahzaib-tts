@@ -2,18 +2,9 @@
   command = "npm run build"
   publish = "public"
 
-[functions]
-  directory = "netlify/functions"
-  node_bundler = "esbuild"
-  # ✅ ensure this package is bundled into the function
-  external_node_modules = ["@andresaya/edge-tts"]
-
+# 👇 Proxy all /api/* calls to Vercel backend
 [[redirects]]
-  from = "/api/voices"
-  to = "/.netlify/functions/voices"
+  from = "/api/*"
+  to = "https://shahzaib-tts-api.vercel.app/api/:splat"
   status = 200
-
-[[redirects]]
-  from = "/api/tts"
-  to = "/.netlify/functions/tts"
-  status = 200
+  force = true
