@@ -1,13 +1,29 @@
 // ===== CONFIG =====
-// If you're using Netlify -> Vercel proxy in netlify.toml, leave this EMPTY:
-let API_BASE = ''; // '' means same-origin => Netlify will proxy /api/* to Vercel
+// Use Netlify -> Vercel proxy (recommended): keep empty
+let API_BASE = ''; // '' => same-origin; Netlify proxy will forward /api/* to Vercel
 
-// If you prefer calling Vercel directly (no Netlify proxy), set a FULL URL here:
+// OR call Vercel directly (skip proxy):
 // API_BASE = 'https://shahzaib-tts-api.vercel.app';
 
+// localStorage keys and TTL
 const LS_KEY = 'shahzaib-tts-settings-v2';
-const VOICE_CACHE_KEY = 'shahzaib-tts-voices';
-const VOICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// ---- Cache busting for voices (GLOBAL REFRESH SWITCH) ----
+const VOICE_CACHE_VERSION = 'v2'; // bump to v3, v4... to force-refresh for ALL users
+const VOICE_CACHE_KEY = `shahzaib-tts-voices:${VOICE_CACHE_VERSION}`;
+const VOICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+// remove all older voice caches on boot
+(function migrateVoiceCache() {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith('shahzaib-tts-voices:') && k !== VOICE_CACHE_KEY) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {}
+})();
+
 const MAX_CHARS = 100000;
 
 // long mode chunking
@@ -18,10 +34,14 @@ const BASE_BACKOFF_MS = 600;
 
 // ===== small helpers =====
 function url(path) {
-  // if API_BASE is '', use relative path (/api/...), else ensure it starts with https://
-  if (!API_BASE) return path;
+  if (!API_BASE) return path; // relative (proxy)
   return API_BASE.startsWith('http') ? `${API_BASE}${path}` : `https://${API_BASE}${path}`;
 }
+
+// global debug hooks
+console.log('[boot] app.js loaded');
+window.addEventListener('error', e => console.error('[window.onerror]', e.message));
+window.addEventListener('unhandledrejection', e => console.error('[unhandledrejection]', e.reason));
 
 // ===== ELEMENTS =====
 const els = {
@@ -53,11 +73,6 @@ const els = {
   progressText: document.getElementById("progressText"),
   progressLabel: document.getElementById("progressLabel"),
 };
-
-// ===== global debug hooks (helps when "console shows nothing") =====
-console.log('[boot] app.js loaded');
-window.addEventListener('error', e => console.error('[window.onerror]', e.message));
-window.addEventListener('unhandledrejection', e => console.error('[unhandledrejection]', e.reason));
 
 // ===== UI HELPERS =====
 const fmt = {
@@ -128,7 +143,9 @@ const safeReg  = code => { try{const n=_regDN.of(code);  return n?`${n} (${code}
 const allVoices = { list: [] };
 const parts = (loc) => { const [l,r=""]=(loc||"").split('-'); return { lang:l, region:r }; };
 
-function cacheVoices(voices){ localStorage.setItem(VOICE_CACHE_KEY, JSON.stringify({at:Date.now(),voices})); }
+function cacheVoices(voices){
+  localStorage.setItem(VOICE_CACHE_KEY, JSON.stringify({ at: Date.now(), voices }));
+}
 function readCachedVoices(){
   try{
     const x = JSON.parse(localStorage.getItem(VOICE_CACHE_KEY) || "{}");
@@ -141,7 +158,7 @@ async function loadVoices(){
   const cached = readCachedVoices();
   if (cached){ allVoices.list = cached; buildFiltersAndVoices(); return; }
   try{
-    const endpoint = url('/api/voices');
+    const endpoint = url(`/api/voices?v=${VOICE_CACHE_VERSION}`); // version bump avoids intermediary caches
     console.log('[voices] fetching:', endpoint);
     const r = await fetch(endpoint, { mode: 'cors' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -156,6 +173,16 @@ async function loadVoices(){
       { ShortName:"en-US-GuyNeural",  Locale:"en-US", Gender:"Male"   }
     ];
     buildFiltersAndVoices();
+  }
+}
+
+// Manual refresh button (optional to wire in your UI)
+async function refreshVoicesNow() {
+  try {
+    localStorage.removeItem(VOICE_CACHE_KEY);
+    await loadVoices();
+  } catch (e) {
+    console.error('Refresh voices failed:', e);
   }
 }
 
