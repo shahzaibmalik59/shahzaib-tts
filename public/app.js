@@ -1,5 +1,5 @@
 // ===== CONFIG =====
-const API_BASE = 'https://shahzaib-tts-rol57qnpc-shahzzaibs-projects.vercel.app';
+const API_BASE = 'https://shahzaib-tts-djwq5krow-shahzzaibs-projects.vercel.app';
 const LS_KEY = 'shahzaib-tts-settings-v2';
 const VOICE_CACHE_KEY = 'shahzaib-tts-voices';
 const VOICE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
