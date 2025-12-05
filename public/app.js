@@ -1,9 +1,9 @@
 // ===== CONFIG =====
 // Use Netlify -> Vercel proxy (recommended): keep empty
-let API_BASE = ''; // '' => same-origin; Netlify proxy will forward /api/* to Vercel
+let API_BASE = 'https://shahzaib-tts-api.vercel.app'; // '' => same-origin; Netlify proxy will forward /api/* to Vercel
 
 // OR call Vercel directly (skip proxy):
-// API_BASE = 'https://shahzaib-tts-api.vercel.app';
+// API_BASE = '';
 
 // localStorage keys and TTL
 const LS_KEY = 'shahzaib-tts-settings-v2';
@@ -322,7 +322,8 @@ function splitTextSmart(text, maxLen){
 async function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
 async function ttsRequest(body){
-  const endpoint = url('/api/tts');
+  // ✅ CHANGED HERE: /api/ctts
+  const endpoint = url('/api/ctts');
   const r = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -420,7 +421,8 @@ els.speak.addEventListener("click", async () => {
 
     } else {
       const format = els.format.value;
-      const endpoint = url('/api/tts');
+      // ✅ CHANGED HERE: /api/ctts
+      const endpoint = url('/api/ctts');
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
